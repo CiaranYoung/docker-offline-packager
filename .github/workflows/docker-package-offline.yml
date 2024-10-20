@@ -10,9 +10,13 @@ on:
       tag:
         description: '可选: 发布标签 (默认为当前日期)'
         required: false
-      custom_name: # 添加这个输入以避免错误
+      custom_name:
         description: '可选: 自定义归档名称（仅在多个镜像时使用）'
         required: false
+      platform:
+        description: '可选: 指定 Docker 镜像的架构 (例如 linux/amd64, linux/arm64, linux/386 等)'
+        required: false
+        default: 'linux/amd64'
 
 jobs:
   pull_and_package:
@@ -22,14 +26,14 @@ jobs:
     - name: 检出存储库
       uses: actions/checkout@v4
 
-    - name: 设置Docker Buildx
+    - name: 设置 Docker Buildx
       uses: docker/setup-buildx-action@v3
 
     - name: 创建构建器并使用它
       run: |
         docker buildx create --use
 
-    - name: 安装QEMU以获得多架构支持
+    - name: 安装 QEMU 以获得多架构支持
       uses: docker/setup-qemu-action@v3
 
     - name: 清理 Docker 以释放空间
@@ -37,9 +41,10 @@ jobs:
         docker system prune -a -f
         docker volume prune -f
 
-    - name: 拉取并保存多架构Docker镜像
+    - name: 拉取并保存指定架构的 Docker 镜像
       run: |
         images="${{ github.event.inputs.docker_images }}"
+        platform="${{ github.event.inputs.platform }}"
         IFS=',' read -r -a image_array <<< "$images"
         for image in "${image_array[@]}"; do
           image_name_with_registry="${image%%:*}"
@@ -47,7 +52,7 @@ jobs:
           image_tag="${image##*:}"
 
           file_name="${image_name}.tar"
-          docker pull "${image}"
+          docker pull --platform "$platform" "${image}"
           docker save "${image}" -o "${file_name}"
         done
 
@@ -115,7 +120,7 @@ jobs:
         fi
         echo "RELEASE_TAG=$tag_name" >> $GITHUB_ENV
 
-    - name: 上传至GitHub Release（如果小于2GB）
+    - name: 上传至 GitHub Release（如果小于2GB）
       if: env.EXCEEDS_LIMIT == 'false'
       uses: softprops/action-gh-release@v1
       with:
