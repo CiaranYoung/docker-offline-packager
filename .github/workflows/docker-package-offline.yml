@@ -18,6 +18,10 @@ on:
         required: false
         default: 'linux/amd64'
 
+permissions:
+  contents: write
+  releases: write
+
 jobs:
   pull_and_package:
     runs-on: ubuntu-latest
@@ -122,7 +126,7 @@ jobs:
 
     - name: 上传至 GitHub Release（如果小于2GB）
       if: env.EXCEEDS_LIMIT == 'false'
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ env.RELEASE_TAG }}
         files: ${{ env.RELEASE_NAME }}
