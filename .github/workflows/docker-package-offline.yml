@@ -41,19 +41,40 @@ jobs:
         docker system prune -a -f
         docker volume prune -f
 
+    # - name: 拉取并保存指定架构的 Docker 镜像
+    #   run: |
+    #     images="${{ github.event.inputs.docker_images }}"
+    #     platform="${{ github.event.inputs.platform }}"
+    #     IFS=',' read -r -a image_array <<< "$images"
+    #     for image in "${image_array[@]}"; do
+    #       image_name_with_registry="${image%%:*}"
+    #       image_name="${image_name_with_registry##*/}"
+    #       image_tag="${image##*:}"
+
+    #       file_name="${image_name}.tar"
+    #       docker pull --platform "$platform" "${image}"
+    #       docker save "${image}" -o "${file_name}"
+    #     done
+
     - name: 拉取并保存指定架构的 Docker 镜像
       run: |
         images="${{ github.event.inputs.docker_images }}"
         platform="${{ github.event.inputs.platform }}"
         IFS=',' read -r -a image_array <<< "$images"
-        for image in "${image_array[@]}"; do
-          image_name_with_registry="${image%%:*}"
-          image_name="${image_name_with_registry##*/}"
-          image_tag="${image##*:}"
 
-          file_name="${image_name}.tar"
-          docker pull --platform "$platform" "${image}"
-          docker save "${image}" -o "${file_name}"
+        for image in "${image_array[@]}"; do
+          # 去除镜像名称中的空格
+          image="$(echo "$image" | xargs)"
+
+          # 使用完整镜像名称生成文件名，将 "/" 替换为 "-"
+          image_file_name="${image//\//-}.tar"
+          
+          # 拉取并保存镜像
+          echo "Pulling $image for platform $platform..."
+          docker pull --platform "$platform" "$image"
+          
+          echo "Saving $image as $image_file_name..."
+          docker save "$image" -o "$image_file_name"
         done
 
     - name: 列出要调试的文件
