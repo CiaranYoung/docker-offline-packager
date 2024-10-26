@@ -954,7 +954,7 @@ jobs:
     - name: 必要时进行压缩
       if: steps.determine_logic.outputs.num_images > 1
       run: |
-        tar -czf "${{ env.RELEASE_NAME }}" -C /mnt/docker-images ./*.tar.gz
+        tar -czf "${{ env.RELEASE_NAME }}" -C /mnt/docker-images "*.tar.gz"
 
     - name: 检查文件大小
       id: check_size
