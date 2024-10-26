@@ -1150,8 +1150,8 @@ jobs:
         if [ $num_images -eq 1 ]; then
           single_image="${image_array[0]%%:*}"
           single_image="${single_image//\//-}.tar.gz"
-          release_file_path="/mnt/docker-images/${single_image}"
-          echo "RELEASE_FILE_PATH=${release_file_path}" >> $GITHUB_ENV
+          release_file_name="${single_image}"
+          echo "RELEASE_FILE_NAME=${release_file_name}" >> $GITHUB_ENV
           echo "num_images=1" >> $GITHUB_OUTPUT
         else
           if [ -z "${{ github.event.inputs.custom_name }}" ]; then
@@ -1159,8 +1159,8 @@ jobs:
           else
             archive_name="${{ github.event.inputs.custom_name }}.tar.gz"
           fi
-          release_file_path="/mnt/docker-images/${archive_name}"
-          echo "RELEASE_FILE_PATH=${release_file_path}" >> $GITHUB_ENV
+          release_file_name="${archive_name}"
+          echo "RELEASE_FILE_NAME=${release_file_name}" >> $GITHUB_ENV
           echo "num_images=$num_images" >> $GITHUB_OUTPUT
         fi
 
@@ -1172,12 +1172,13 @@ jobs:
     - name: 必要时进行压缩
       if: steps.determine_logic.outputs.num_images > 1
       run: |
-        tar -czf "${{ env.RELEASE_FILE_PATH }}" --exclude="$(basename "${{ env.RELEASE_FILE_PATH }}")" -C /mnt/docker-images *.tar.gz
+        cd /mnt/docker-images
+        tar -czf "${RELEASE_FILE_NAME}" *.tar.gz
 
     - name: 检查文件大小
       id: check_size
       run: |
-        file="${{ env.RELEASE_FILE_PATH }}"
+        file="/mnt/docker-images/${{ env.RELEASE_FILE_NAME }}"
         file_size=$(stat -c%s "$file")
         max_size=$((2 * 1024 * 1024 * 1024))  # 2GB
 
@@ -1192,9 +1193,8 @@ jobs:
 
     - name: 获取发布名称和标签
       run: |
-        release_file_path="${{ env.RELEASE_FILE_PATH }}"
-        release_file_name=$(basename "$release_file_path")
-        echo "RELEASE_FILE_NAME=$release_file_name" >> $GITHUB_ENV
+        release_file_name="${{ env.RELEASE_FILE_NAME }}"
+        echo "RELEASE_FILE_NAME=${release_file_name}" >> $GITHUB_ENV
 
         if [ -z "${{ github.event.inputs.tag }}" ]; then
           tag_name=$(date +'%Y%m%d')
@@ -1225,8 +1225,6 @@ jobs:
     - name: 清理中间文件
       run: |
         rm -rf /mnt/docker-images/*.tar.gz
-        rm -rf /mnt/docker-images/*.tar.gz
 
     - name: 显示最终磁盘使用情况
       run: df -h
-
