@@ -1072,11 +1072,11 @@ jobs:
       run: |
         set -e  # 任何错误都会导致脚本退出
         images="${{ github.event.inputs.docker_images }}"
-        platform="${{ github.event.inputs.docker_arch }}"
+        docker_arch="${{ github.event.inputs.docker_arch }}"
         IFS=',' read -r -a image_array <<< "$images"
 
         echo "准备处理的镜像列表: ${image_array[@]}"
-        echo "目标架构: $platform"
+        echo "目标架构: $docker_arch"
 
         for image in "${image_array[@]}"; do
           # 去除镜像名称中的前后空格和任何回车符
@@ -1099,8 +1099,8 @@ jobs:
           # 生成文件名，替换 '/' 为 '-' 以避免文件系统路径问题，并添加压缩扩展名
           image_file_name="${image//\//-}.tar.gz"
 
-          echo "正在拉取镜像: $image for platform: $platform..."
-          docker pull --platform "$platform" "$image"
+          echo "正在拉取镜像: $image for architecture: $docker_arch..."
+          docker pull --platform "$docker_arch" "$image"
 
           echo "正在检查 /mnt/docker-images 的可用空间..."
 
@@ -1164,10 +1164,15 @@ jobs:
           echo "num_images=$num_images" >> $GITHUB_OUTPUT
         fi
 
+    - name: 列出要压缩的文件（调试）
+      if: steps.determine_logic.outputs.num_images > 1
+      run: |
+        ls -lh /mnt/docker-images/*.tar.gz
+
     - name: 必要时进行压缩
       if: steps.determine_logic.outputs.num_images > 1
       run: |
-        tar -czf "${{ env.RELEASE_FILE_PATH }}" -C /mnt/docker-images *.tar.gz --exclude="$(basename "${{ env.RELEASE_FILE_PATH }}")"
+        tar -czf "${{ env.RELEASE_FILE_PATH }}" --exclude="$(basename "${{ env.RELEASE_FILE_PATH }}")" -C /mnt/docker-images *.tar.gz
 
     - name: 检查文件大小
       id: check_size
@@ -1201,22 +1206,12 @@ jobs:
         echo "Computed RELEASE_FILE_NAME: $release_file_name"
         echo "Computed RELEASE_TAG: $tag_name"
 
-    - name: 创建指向归档文件的符号链接（多镜像）
-      if: steps.determine_logic.outputs.num_images > 1
-      run: |
-        ln -s "${{ env.RELEASE_FILE_PATH }}" "./${{ env.RELEASE_FILE_NAME }}"
-
-    - name: 创建指向归档文件的符号链接（单镜像）
-      if: steps.determine_logic.outputs.num_images == 1
-      run: |
-        ln -s "${{ env.RELEASE_FILE_PATH }}" "./${{ env.RELEASE_FILE_NAME }}"
-
     - name: 上传至 GitHub Release（如果小于2GB）
       if: env.EXCEEDS_LIMIT == 'false'
       uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ env.RELEASE_TAG }}
-        files: ${{ env.RELEASE_FILE_NAME }}
+        files: /mnt/docker-images/${{ env.RELEASE_FILE_NAME }}
         body: "Docker 镜像离线包 - ${{ env.RELEASE_TAG }}"
         token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -1229,6 +1224,7 @@ jobs:
 
     - name: 清理中间文件
       run: |
+        rm -rf /mnt/docker-images/*.tar.gz
         rm -rf /mnt/docker-images/*.tar.gz
 
     - name: 显示最终磁盘使用情况
