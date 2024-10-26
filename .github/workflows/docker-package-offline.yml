@@ -907,9 +907,9 @@ jobs:
             save_path="/mnt/docker-images/${image_file_name}"
             echo "保存到 /mnt/docker-images: $save_path"
 
-            # 保存并压缩镜像到 /mnt/docker-images 目录，使用 sudo tee 提升权限
+            # 保存并压缩镜像到 /mnt/docker-images 目录
             echo "保存并压缩镜像到: $save_path"
-            docker save "$image" | gzip | sudo tee "$save_path" > /dev/null
+            docker save "$image" | gzip > "$save_path"
 
             echo "成功保存 $image 到 $save_path"
 
@@ -938,23 +938,26 @@ jobs:
 
         if [ $num_images -eq 1 ]; then
           single_file="${image_array[0]%%:*}"
-          single_file="${single_file##*/}.tar.gz"
-          echo "RELEASE_NAME=/mnt/docker-images/${single_file}" >> $GITHUB_ENV
+          single_file="${single_file//\//-}.tar.gz"
+          RELEASE_NAME="/mnt/docker-images/${single_file}"
+          echo "RELEASE_NAME=$RELEASE_NAME" >> $GITHUB_ENV
           echo "num_images=1" >> $GITHUB_OUTPUT
         else
           if [ -z "${{ github.event.inputs.custom_name }}" ]; then
-            archive_name="/mnt/docker-images/$(date +'%Y%m%d').tar.gz"
+            archive_name="$(date +'%Y%m%d').tar.gz"
           else
-            archive_name="/mnt/docker-images/${{ github.event.inputs.custom_name }}.tar.gz"
+            archive_name="${{ github.event.inputs.custom_name }}.tar.gz"
           fi
-          echo "RELEASE_NAME=${archive_name}" >> $GITHUB_ENV
+          RELEASE_NAME="/mnt/docker-images/${archive_name}"
+          echo "RELEASE_NAME=$RELEASE_NAME" >> $GITHUB_ENV
           echo "num_images=$num_images" >> $GITHUB_OUTPUT
         fi
 
     - name: 必要时进行压缩
       if: steps.determine_logic.outputs.num_images > 1
       run: |
-        tar -czf "${{ env.RELEASE_NAME }}" -C /mnt/docker-images "*.tar.gz"
+        cd /mnt/docker-images
+        tar -czf "${RELEASE_NAME}" *.tar.gz
 
     - name: 检查文件大小
       id: check_size
@@ -974,15 +977,7 @@ jobs:
 
     - name: 获取发布名称和标签
       run: |
-        if [ ${{ steps.determine_logic.outputs.num_images }} -gt 1 ]; then
-          if [ -z "${{ github.event.inputs.custom_name }}" ]; then
-            release_name="${{ env.RELEASE_NAME }}"
-          else
-            release_name="${{ github.event.inputs.custom_name }}.tar.gz"
-          fi
-        else
-          release_name="${{ env.RELEASE_NAME }}"
-        fi
+        release_name=$(basename "${{ env.RELEASE_NAME }}")
         echo "RELEASE_NAME=$release_name" >> $GITHUB_ENV
 
         if [ -z "${{ github.event.inputs.tag }}" ]; then
@@ -992,13 +987,20 @@ jobs:
         fi
         echo "RELEASE_TAG=$tag_name" >> $GITHUB_ENV
 
+        echo "Computed RELEASE_NAME: $release_name"
+        echo "Computed RELEASE_TAG: $tag_name"
+
+    - name: 创建指向归档文件的符号链接
+      run: |
+        ln -s "${{ env.RELEASE_NAME }}" "./${{ env.RELEASE_NAME }}"
+
     - name: 上传至 GitHub Release（如果小于2GB）
       if: env.EXCEEDS_LIMIT == 'false'
       uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ env.RELEASE_TAG }}
         files: ${{ env.RELEASE_NAME }}
-        body: "Daily Docker Images for ${{ env.RELEASE_TAG }}"
+        body: "Docker 镜像离线包 - ${{ env.RELEASE_TAG }}"
         token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: 上传为工件（如果超过2GB）
@@ -1008,10 +1010,10 @@ jobs:
         name: ${{ env.RELEASE_NAME }}
         path: ${{ env.RELEASE_NAME }}
 
-    - name: 清理中间文件（如果小于2GB）
-      if: env.EXCEEDS_LIMIT == 'false'
+    - name: 清理中间文件
       run: |
-        rm /mnt/docker-images/*.tar.gz
+        rm -rf /mnt/docker-images
 
     - name: 显示最终磁盘使用情况
       run: df -h
+
