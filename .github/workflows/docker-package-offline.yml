@@ -56,25 +56,65 @@ jobs:
     #       docker save "${image}" -o "${file_name}"
     #     done
 
+    # - name: 拉取并保存指定架构的 Docker 镜像
+    #   run: |
+    #     images="${{ github.event.inputs.docker_images }}"
+    #     platform="${{ github.event.inputs.platform }}"
+    #     IFS=',' read -r -a image_array <<< "$images"
+
+    #     for image in "${image_array[@]}"; do
+    #       # 去除镜像名称中的空格
+    #       image="$(echo "$image" | xargs)"
+
+    #       # 使用完整镜像名称生成文件名，将 "/" 替换为 "-"
+    #       image_file_name="${image//\//-}.tar"
+          
+    #       # 拉取并保存镜像
+    #       echo "Pulling $image for platform $platform..."
+    #       docker pull --platform "$platform" "$image"
+          
+    #       echo "Saving $image as $image_file_name..."
+    #       docker save "$image" -o "$image_file_name"
+    #     done
+
     - name: 拉取并保存指定架构的 Docker 镜像
       run: |
+        set -e  # 任何错误都会导致脚本退出
         images="${{ github.event.inputs.docker_images }}"
         platform="${{ github.event.inputs.platform }}"
         IFS=',' read -r -a image_array <<< "$images"
 
-        for image in "${image_array[@]}"; do
-          # 去除镜像名称中的空格
-          image="$(echo "$image" | xargs)"
+        echo "准备处理的镜像列表: ${image_array[@]}"
+        echo "目标平台: $platform"
 
-          # 使用完整镜像名称生成文件名，将 "/" 替换为 "-"
+        for image in "${image_array[@]}"; do
+          # 去除镜像名称中的前后空格和任何回车符
+          image="$(echo "$image" | tr -d '\r' | xargs)"
+          
+          echo "正在处理镜像: '$image'"
+
+          # 检查镜像名称是否为空
+          if [ -z "$image" ]; then
+            echo "跳过空的镜像条目。"
+            continue
+          fi
+
+          # 检查镜像是否包含标签，如果没有则添加默认标签 ':latest'
+          if [[ "$image" != *:* ]]; then
+            echo "镜像 '$image' 缺少标签，自动添加 ':latest' 标签。"
+            image="${image}:latest"
+          fi
+
+          # 生成文件名，替换 '/' 为 '-' 以避免文件系统路径问题
           image_file_name="${image//\//-}.tar"
           
-          # 拉取并保存镜像
-          echo "Pulling $image for platform $platform..."
+          echo "正在拉取镜像: $image for platform: $platform..."
           docker pull --platform "$platform" "$image"
-          
-          echo "Saving $image as $image_file_name..."
+
+          echo "正在保存镜像: $image 为文件: $image_file_name..."
           docker save "$image" -o "$image_file_name"
+
+          echo "成功保存 $image 到 $image_file_name"
         done
 
     - name: 列出要调试的文件
