@@ -857,40 +857,6 @@ jobs:
         sudo chmod 777 /mnt/docker-images
         ls -ld /mnt/docker-images
 
-    - name: 创建或更新 GitHub Release
-      id: create_release
-      run: |
-        tag="${{ github.event.inputs.tag }}"
-        if [ -z "$tag" ]; then
-          tag=$(date +'%Y%m%d')
-        fi
-        echo "创建或更新 Release with tag: $tag"
-        echo "RELEASE_TAG=$tag" >> $GITHUB_ENV
-        gh release create "$tag" --title "Release $tag" --notes "Docker 镜像离线包 Release $tag" --draft false --prerelease false || \
-        gh release edit "$tag" --title "Release $tag" --notes "Docker 镜像离线包 Release $tag"
-
-    - name: 确定文件处理逻辑
-      id: determine_logic
-      run: |
-        images="${{ github.event.inputs.docker_images }}"
-        IFS=',' read -r -a image_array <<< "$images"
-        num_images=${#image_array[@]}
-
-        if [ $num_images -eq 1 ]; then
-          single_file="${image_array[0]%%:*}"
-          single_file="${single_file##*/}.tar.gz"
-          echo "RELEASE_NAME=/mnt/docker-images/${single_file}" >> $GITHUB_ENV
-          echo "num_images=1" >> $GITHUB_OUTPUT
-        else
-          if [ -z "${{ github.event.inputs.custom_name }}" ]; then
-            archive_name="/mnt/docker-images/$(date +'%Y%m%d').tar.gz"
-          else
-            archive_name="/mnt/docker-images/${{ github.event.inputs.custom_name }}.tar.gz"
-          fi
-          echo "RELEASE_NAME=${archive_name}" >> $GITHUB_ENV
-          echo "num_images=$num_images" >> $GITHUB_OUTPUT
-        fi
-
     - name: 拉取并保存所有 Docker 镜像
       run: |
         set -e  # 任何错误都会导致脚本退出
@@ -959,6 +925,32 @@ jobs:
           fi
         done
 
+    - name: 列出要调试的文件
+      run: |
+        ls -lh /mnt/docker-images
+
+    - name: 确定文件处理逻辑
+      id: determine_logic
+      run: |
+        images="${{ github.event.inputs.docker_images }}"
+        IFS=',' read -r -a image_array <<< "$images"
+        num_images=${#image_array[@]}
+
+        if [ $num_images -eq 1 ]; then
+          single_file="${image_array[0]%%:*}"
+          single_file="${single_file##*/}.tar.gz"
+          echo "RELEASE_NAME=/mnt/docker-images/${single_file}" >> $GITHUB_ENV
+          echo "num_images=1" >> $GITHUB_OUTPUT
+        else
+          if [ -z "${{ github.event.inputs.custom_name }}" ]; then
+            archive_name="/mnt/docker-images/$(date +'%Y%m%d').tar.gz"
+          else
+            archive_name="/mnt/docker-images/${{ github.event.inputs.custom_name }}.tar.gz"
+          fi
+          echo "RELEASE_NAME=${archive_name}" >> $GITHUB_ENV
+          echo "num_images=$num_images" >> $GITHUB_OUTPUT
+        fi
+
     - name: 必要时进行压缩
       if: steps.determine_logic.outputs.num_images > 1
       run: |
@@ -1023,4 +1015,3 @@ jobs:
 
     - name: 显示最终磁盘使用情况
       run: df -h
-
