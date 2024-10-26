@@ -851,19 +851,6 @@ jobs:
     - name: 显示初始磁盘使用情况
       run: df -h
 
-    - name: 安装 GitHub CLI
-      run: |
-        curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-        sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
-        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-        sudo apt update
-        sudo apt install gh -y
-
-    - name: 登录 GitHub CLI
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: echo "${GITHUB_TOKEN}" | gh auth login --with-token
-
     - name: 创建 /mnt/docker-images 目录并设置权限
       run: |
         sudo mkdir -p /mnt/docker-images
@@ -871,13 +858,16 @@ jobs:
         ls -ld /mnt/docker-images
 
     - name: 创建或更新 GitHub Release
+      id: create_release
       run: |
         tag="${{ github.event.inputs.tag }}"
         if [ -z "$tag" ]; then
           tag=$(date +'%Y%m%d')
         fi
         echo "创建或更新 Release with tag: $tag"
-        gh release upsert "$tag" --title "Release $tag" --notes "Docker 镜像离线包 Release $tag" --repo ${{ github.repository }} --draft false --prerelease false
+        echo "RELEASE_TAG=$tag" >> $GITHUB_ENV
+        gh release create "$tag" --title "Release $tag" --notes "Docker 镜像离线包 Release $tag" --draft false --prerelease false || \
+        gh release edit "$tag" --title "Release $tag" --notes "Docker 镜像离线包 Release $tag"
 
     - name: 确定文件处理逻辑
       id: determine_logic
@@ -957,6 +947,12 @@ jobs:
 
             echo "成功保存 $image 到 $save_path"
 
+            # 删除镜像以释放空间
+            echo "删除镜像: $image 以释放空间..."
+            docker rmi "$image" || true
+
+            echo "当前磁盘使用情况："
+            df -h
           else
             echo "没有足够的空间保存镜像: $image"
             exit 1
@@ -1027,3 +1023,4 @@ jobs:
 
     - name: 显示最终磁盘使用情况
       run: df -h
+
