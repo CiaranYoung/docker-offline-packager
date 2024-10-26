@@ -1,0 +1,150 @@
+name: Docker镜像智能打包离线包
+
+on:
+  workflow_dispatch:
+    inputs:
+      docker_images:
+        description: '请填写 Docker 镜像名称 (多个用英文逗号分开)'
+        required: true
+        default: 'alpine:latest'
+      tag:
+        description: '可选: 发布标签 (默认为当前日期)'
+        required: false
+      custom_name:
+        description: '可选: 自定义归档名称（仅在多个镜像时使用）'
+        required: false
+      platform:
+        description: '可选: 指定 Docker 镜像的架构 (例如 linux/amd64, linux/arm64, linux/386 等)'
+        required: false
+        default: 'linux/amd64'
+
+jobs:
+  pull_and_package:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 检出存储库
+      uses: actions/checkout@v4
+
+    - name: 设置 Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: 创建构建器并使用它
+      run: docker buildx create --use
+
+    - name: 安装 QEMU 以获得多架构支持
+      uses: docker/setup-qemu-action@v3
+
+    - name: 清理 Docker 以释放空间
+      run: |
+        docker system prune -a -f
+        docker volume prune -f
+
+    - name: 显示磁盘使用情况（开始）
+      run: df -h
+
+    - name: 创建保存目录
+      run: mkdir -p "${GITHUB_WORKSPACE}/docker-images"
+
+    - name: 测试写入 /mnt 目录（可选）
+      run: |
+        echo "test" | sudo tee /mnt/test_write.txt > /dev/null
+        cat /mnt/test_write.txt
+        sudo rm /mnt/test_write.txt
+
+    - name: 拉取、保存、上传并删除 Docker 镜像
+      run: |
+        set -e  # 任何错误都会导致脚本退出
+        images="${{ github.event.inputs.docker_images }}"
+        platform="${{ github.event.inputs.platform }}"
+        IFS=',' read -r -a image_array <<< "$images"
+
+        echo "准备处理的镜像列表: ${image_array[@]}"
+        echo "目标平台: $platform"
+
+        for image in "${image_array[@]}"; do
+          # 去除镜像名称中的前后空格和任何回车符
+          image="$(echo "$image" | tr -d '\r' | xargs)"
+          
+          echo "正在处理镜像: '$image'"
+
+          # 检查镜像名称是否为空
+          if [ -z "$image" ]; then
+            echo "跳过空的镜像条目。"
+            continue
+          fi
+
+          # 检查镜像是否包含标签，如果没有则添加默认标签 ':latest'
+          if [[ "$image" != *:* ]]; then
+            echo "镜像 '$image' 缺少标签，自动添加 ':latest' 标签。"
+            image="${image}:latest"
+          fi
+
+          # 生成文件名，替换 '/' 为 '-' 以避免文件系统路径问题，并添加压缩扩展名
+          image_file_name="${image//\//-}.tar.gz"
+
+          echo "正在拉取镜像: $image for platform: $platform..."
+          docker pull --platform "$platform" "$image"
+
+          echo "正在检查可用空间..."
+
+          # 获取可用空间（以字节为单位）
+          avail_workdir=$(df --output=avail -B1 "${GITHUB_WORKSPACE}/docker-images" | tail -1)
+          avail_mnt=$(df --output=avail -B1 /mnt | tail -1)
+
+          # 获取镜像大小
+          image_size=$(docker image inspect "$image" --format='{{.Size}}')
+
+          echo "镜像大小: $image_size bytes"
+          echo "工作目录可用空间: $avail_workdir bytes"
+          echo "/mnt 可用空间: $avail_mnt bytes"
+
+          # 决定保存路径
+          if [ "$avail_workdir" -ge "$image_size" ]; then
+            save_path="${GITHUB_WORKSPACE}/docker-images/${image_file_name}"
+            echo "保存到工作目录: $save_path"
+            save_command="docker save \"$image\" | gzip > \"$save_path\""
+          elif [ "$avail_mnt" -ge "$image_size" ]; then
+            save_path="/mnt/${image_file_name}"
+            echo "保存到 /mnt: $save_path"
+            save_command="docker save \"$image\" | gzip | sudo tee \"$save_path\" > /dev/null"
+          else
+            echo "没有足够的空间保存镜像: $image"
+            exit 1
+          fi
+
+          # 保存并压缩镜像到选定路径
+          echo "保存并压缩镜像到: $save_path"
+          eval "$save_command"
+
+          echo "成功保存 $image 到 $save_path"
+
+          # 上传镜像文件
+          if [[ "$save_path" == /mnt/* ]]; then
+            echo "上传镜像到 GitHub Release 或作为工件..."
+            # 根据需求选择上传到 Release 或 Artifacts
+            # 这里以上传为工件为例
+            echo "上传 $save_path 作为工件..."
+            gh release upload "${{ github.event.inputs.tag || format('{0:yyyyMMdd}', 'now') }}" "$save_path" --clobber
+          else
+            echo "上传镜像到 GitHub Release 或作为工件..."
+            # 根据需求选择上传到 Release 或 Artifacts
+            # 这里以上传为工件为例
+            echo "上传 $save_path 作为工件..."
+            gh release upload "${{ github.event.inputs.tag || format('{0:yyyyMMdd}', 'now') }}" "$save_path" --clobber
+          fi
+
+          # 删除本地保存的镜像文件以释放空间
+          echo "删除本地镜像文件: $save_path 以释放空间..."
+          rm "$save_path"
+
+          # 删除镜像以释放空间
+          echo "删除镜像: $image 以释放空间..."
+          docker rmi "$image" || true
+
+          echo "当前磁盘使用情况："
+          df -h
+        done
+
+    - name: 显示最终磁盘使用情况
+      run: df -h
