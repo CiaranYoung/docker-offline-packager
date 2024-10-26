@@ -617,8 +617,7 @@ jobs:
       uses: docker/setup-buildx-action@v3
 
     - name: 创建构建器并使用它
-      run: |
-        docker buildx create --use
+      run: docker buildx create --use
 
     - name: 安装 QEMU 以获得多架构支持
       uses: docker/setup-qemu-action@v3
@@ -627,11 +626,6 @@ jobs:
       run: |
         docker system prune -a -f
         docker volume prune -f
-
-    - name: 确保 /mnt 目录可写
-      run: |
-        mkdir -p /mnt
-        ls -ld /mnt
 
     - name: 显示磁盘使用情况（开始）
       run: df -h
@@ -645,6 +639,9 @@ jobs:
 
         echo "准备处理的镜像列表: ${image_array[@]}"
         echo "目标平台: $platform"
+
+        # 创建保存目录
+        mkdir -p "${GITHUB_WORKSPACE}/docker-images"
 
         for image in "${image_array[@]}"; do
           # 去除镜像名称中的前后空格和任何回车符
@@ -666,36 +663,40 @@ jobs:
 
           # 生成文件名，替换 '/' 为 '-' 以避免文件系统路径问题，并添加压缩扩展名
           image_file_name="${image//\//-}.tar.gz"
-          
+
           echo "正在拉取镜像: $image for platform: $platform..."
           docker pull --platform "$platform" "$image"
 
           echo "正在检查可用空间..."
-          avail_root=$(df --output=avail -B1 / | tail -1)
+
+          # 获取可用空间（以字节为单位）
+          avail_workdir=$(df --output=avail -B1 "$GITHUB_WORKSPACE/docker-images" | tail -1)
           avail_mnt=$(df --output=avail -B1 /mnt | tail -1)
 
           # 获取镜像大小
           image_size=$(docker image inspect "$image" --format='{{.Size}}')
-
+          
           echo "镜像大小: $image_size bytes"
-          echo "/ 可用空间: $avail_root bytes"
+          echo "工作目录 (/home/runner/work/<repo>/<repo>/docker-images) 可用空间: $avail_workdir bytes"
           echo "/mnt 可用空间: $avail_mnt bytes"
 
           # 决定保存路径
-          if [ "$avail_root" -ge "$image_size" ]; then
-            save_path="/${image_file_name}"
-            echo "保存到根文件系统: $save_path"
+          if [ "$avail_workdir" -ge "$image_size" ]; then
+            save_path="${GITHUB_WORKSPACE}/docker-images/${image_file_name}"
+            echo "保存到工作目录: $save_path"
+            save_command="docker save \"$image\" | gzip > \"$save_path\""
           elif [ "$avail_mnt" -ge "$image_size" ]; then
             save_path="/mnt/${image_file_name}"
             echo "保存到 /mnt: $save_path"
+            save_command="docker save \"$image\" | gzip | sudo tee \"$save_path\" > /dev/null"
           else
             echo "没有足够的空间保存镜像: $image"
             exit 1
           fi
 
-          # 保存并压缩镜像
+          # 保存并压缩镜像到选定路径
           echo "保存并压缩镜像到: $save_path"
-          docker save "$image" | gzip > "$save_path"
+          eval "$save_command"
 
           echo "成功保存 $image 到 $save_path"
 
@@ -709,8 +710,7 @@ jobs:
 
     - name: 列出要调试的文件
       run: |
-        ls -lh /mnt
-        ls -lh /
+        ls -lh "${GITHUB_WORKSPACE}/docker-images" || ls -lh /mnt
 
     - name: 确定文件处理逻辑
       id: determine_logic
@@ -723,17 +723,17 @@ jobs:
           single_file="${image_array[0]%%:*}"
           single_file="${single_file##*/}.tar.gz"
           # 判断保存路径
-          if [ -f "/mnt/${single_file}" ]; then
-            echo "RELEASE_NAME=/mnt/${single_file}" >> $GITHUB_ENV
+          if [ -f "${GITHUB_WORKSPACE}/docker-images/${single_file}" ]; then
+            echo "RELEASE_NAME=${GITHUB_WORKSPACE}/docker-images/${single_file}" >> $GITHUB_ENV
           else
-            echo "RELEASE_NAME=/${single_file}" >> $GITHUB_ENV
+            echo "RELEASE_NAME=/mnt/${single_file}" >> $GITHUB_ENV
           fi
           echo "num_images=1" >> $GITHUB_OUTPUT
         else
           if [ -z "${{ github.event.inputs.custom_name }}" ]; then
-            archive_name="/mnt/$(date +'%Y%m%d').tar.gz"
+            archive_name="${GITHUB_WORKSPACE}/docker-images/$(date +'%Y%m%d').tar.gz"
           else
-            archive_name="/mnt/${{ github.event.inputs.custom_name }}.tar.gz"
+            archive_name="${GITHUB_WORKSPACE}/docker-images/${{ github.event.inputs.custom_name }}.tar.gz"
           fi
           echo "RELEASE_NAME=${archive_name}" >> $GITHUB_ENV
           echo "num_images=$num_images" >> $GITHUB_OUTPUT
@@ -742,7 +742,12 @@ jobs:
     - name: 必要时进行压缩
       if: steps.determine_logic.outputs.num_images > 1
       run: |
-        tar -czf "${{ env.RELEASE_NAME }}" /mnt/*.tar.gz
+        # 如果存在 /mnt 中的文件，优先压缩 /mnt 的文件
+        if ls /mnt/*.tar.gz 1> /dev/null 2>&1; then
+          tar -czf "${{ env.RELEASE_NAME }}" -C /mnt .
+        else
+          tar -czf "${{ env.RELEASE_NAME }}" -C "${GITHUB_WORKSPACE}/docker-images" .
+        fi
 
     - name: 检查文件大小
       id: check_size
@@ -750,6 +755,9 @@ jobs:
         file="${{ env.RELEASE_NAME }}"
         file_size=$(stat -c%s "$file")
         max_size=$((2 * 1024 * 1024 * 1024))  # 2GB
+
+        echo "文件大小: $file_size bytes"
+        echo "最大允许大小: $max_size bytes"
 
         if [ "$file_size" -gt "$max_size" ]; then
           echo "EXCEEDS_LIMIT=true" >> $GITHUB_ENV
@@ -796,5 +804,5 @@ jobs:
     - name: 清理中间文件（如果小于2GB）
       if: env.EXCEEDS_LIMIT == 'false'
       run: |
-        rm /mnt/*.tar.gz
+        rm "${GITHUB_WORKSPACE}/docker-images"/*.tar.gz || rm /mnt/*.tar.gz
 
