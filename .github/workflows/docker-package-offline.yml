@@ -1097,7 +1097,8 @@ jobs:
           fi
 
           # 生成文件名，替换 '/' 为 '-' 以避免文件系统路径问题，并添加压缩扩展名
-          image_file_name="${image//\//-}.tar.gz"
+          # image_file_name="${image//\//-}.tar.gz"
+          image_file_name="${image//[:\/]/-}.tar.gz"
 
           echo "正在拉取镜像: $image for architecture: $docker_arch..."
           docker pull --platform "$docker_arch" "$image"
