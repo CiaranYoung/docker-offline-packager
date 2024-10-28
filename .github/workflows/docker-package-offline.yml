@@ -1096,9 +1096,8 @@ jobs:
             image="${image}:latest"
           fi
 
-          # 生成文件名，替换 '/' 为 '-' 以避免文件系统路径问题，并添加压缩扩展名
-          # image_file_name="${image//\//-}.tar.gz"
-          image_file_name="${image//[:\/]/-}.tar.gz"
+          # 生成文件名，替换 '/' 和 ':' 为 '-' 以避免文件系统路径问题，并设置扩展名为 .tar
+          image_file_name="${image//[:\/]/-}.tar"
 
           echo "正在拉取镜像: $image for architecture: $docker_arch..."
           docker pull --platform "$docker_arch" "$image"
@@ -1119,9 +1118,9 @@ jobs:
             save_path="/mnt/docker-images/${image_file_name}"
             echo "保存到 /mnt/docker-images: $save_path"
 
-            # 保存并压缩镜像到 /mnt/docker-images 目录
+            # 保存镜像到 /mnt/docker-images 目录，直接保存为 .tar 文件
             echo "保存并压缩镜像到: $save_path"
-            docker save "$image" | gzip > "$save_path"
+            docker save -o "$save_path" "$image"
 
             echo "成功保存 $image 到 $save_path"
 
@@ -1149,8 +1148,8 @@ jobs:
         num_images=${#image_array[@]}
 
         if [ $num_images -eq 1 ]; then
-          single_image="${image_array[0]%%:*}"
-          single_image="${single_image//\//-}.tar.gz"
+          # 单个镜像处理逻辑，文件名替换 '/' 和 ':' 为 '-'，并使用 .tar 扩展名
+          single_image="${single_image//[:\/]/-}.tar"
           release_file_name="${single_image}"
           echo "RELEASE_FILE_NAME=${release_file_name}" >> $GITHUB_ENV
           echo "num_images=1" >> $GITHUB_OUTPUT
@@ -1168,13 +1167,13 @@ jobs:
     - name: 列出要压缩的文件（调试）
       if: steps.determine_logic.outputs.num_images > 1
       run: |
-        ls -lh /mnt/docker-images/*.tar.gz
+        ls -lh /mnt/docker-images/*.tar
 
     - name: 必要时进行压缩
       if: steps.determine_logic.outputs.num_images > 1
       run: |
         cd /mnt/docker-images
-        tar -czf "${RELEASE_FILE_NAME}" *.tar.gz
+        tar -czf "${RELEASE_FILE_NAME}" *.tar
 
     - name: 检查文件大小
       id: check_size
@@ -1223,9 +1222,9 @@ jobs:
         name: ${{ env.RELEASE_FILE_NAME }}
         path: /mnt/docker-images/${{ env.RELEASE_FILE_NAME }}
 
-    - name: 清理中间文件
+    - name: 清理中间文件（如果小于2GB）
       run: |
-        rm -rf /mnt/docker-images/*.tar.gz
+        rm -rf /mnt/docker-images/*.tar
 
     - name: 显示最终磁盘使用情况
       run: df -h
